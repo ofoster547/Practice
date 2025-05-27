@@ -1,0 +1,39 @@
+syntax = "proto3";
+package Trade.protobuf;
+
+enum OrderSide
+{
+    buy = 0;
+    sell = 1;
+}
+
+enum OrderType
+{
+    market = 0;
+    limit = 1;
+    stop = 2;
+}
+
+message Order
+{
+    int32 id = 1;
+    string symbol = 2;
+    OrderSide side = 3;
+    OrderType type = 4;
+    double price = 5;
+    double volume = 6;
+}
+
+message Balance
+{
+    string currency = 1;
+    double amount = 2;
+}
+
+message Account
+{
+    int32 id = 1;
+    string name = 2;
+    Balance wallet = 3;
+    repeated Order orders = 4;
+}
