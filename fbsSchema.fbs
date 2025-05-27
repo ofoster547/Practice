@@ -1,0 +1,40 @@
+namespace Trade.flatbuf;
+
+enum OrderSide : byte
+{
+    buy,
+    sell
+}
+
+enum OrderType : byte
+{
+    market,
+    limit,
+    stop
+}
+
+table Order
+{
+    id : int;
+    symbol : string;
+    side : OrderSide;
+    type : OrderType;
+    price : double = 0.0;
+    volume : double = 0.0;
+}
+
+table Balance
+{
+    currency : string;
+    amount : double = 0.0;
+}
+
+table Account
+{
+    id : int;
+    name : string;
+    wallet : Balance;
+    orders : [Order];
+}
+
+root_type Account;
