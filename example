@@ -1,0 +1,101 @@
+// There are existing parser tools for Protobuf schemas we can use.
+// We probably don’t need to write a Protobuf parser in C++ from scratch.
+// Instead, we can use generated C++ accessors (as seen in the serialization repo) (FIND EXAMPLES)
+// and create adapter modules in C++. (WHAT)
+// For generating code, we can use Protobuf schema parsers written in C#. (WHAT)
+// Example usage of Protobuf schema reflection in C# follows:
+
+using Google.Protobuf.Reflection; // Importing Protobuf reflection API
+
+// Event handler for the button click to load a .proto IDL file
+private void btnLoadIDL_Click(object sender, EventArgs e)
+{
+    // Open a file dialog and exit if the user cancels
+    if (dlgOpenImport.ShowDialog() != DialogResult.OK) return;
+
+    // Set current tree views and current entity name
+    currentTreeView = idlTreeView;
+    currentFieldTree = idlFieldTreeView;
+    currentTypeTree = idlTypeTreeView;
+    currentEntityName = idlEntityName;
+
+    // Create a new FileDescriptorSet to load Protobuf definitions
+    set = new FileDescriptorSet();
+
+    // Get selected file info and add it to the descriptor set
+    FileInfo fi = new FileInfo(dlgOpenImport.FileName);
+    set.AddImportPath(fi.DirectoryName); // Add directory path for resolving imports
+    set.Add(fi.Name); // Add the selected file to the descriptor set
+    set.Process(); // Process the files to generate descriptors
+
+    // Clear existing nodes from the tree view
+    idlTreeView.Nodes.Clear();
+
+    // Add a top-level node labeled "Messages"
+    TreeNode TopField = currentTreeView.Nodes.Add("Messages");
+
+    // Iterate through each parsed file in the descriptor set
+    foreach (var file in set.Files)
+    {
+        // Iterate through each top-level message in the file
+        foreach (var topLevelMessage in file.MessageTypes)
+        {
+            // Create a tree node for each message and tag it with its descriptor
+            TreeNode messageNode = TopField.Nodes.Add(topLevelMessage.Name + " (message)");
+            messageNode.Tag = topLevelMessage;
+
+            // Iterate through fields in the message
+            foreach (var field in topLevelMessage.Fields)
+            {
+                // Handle complex field types (messages/enums)
+                if (field.type == FieldDescriptorProto.Type.TypeMessage ||
+                    field.type == FieldDescriptorProto.Type.TypeEnum)
+                {
+                    // Remove the type name prefix (e.g., package name)
+                    int index = field.TypeName.LastIndexOf(".", field.TypeName.Length);
+
+                    // Display repeated fields with square brackets
+                    if (field.label == FieldDescriptorProto.Label.LabelRepeated)
+                    {
+                        messageNode.Nodes.Add("[" + field.Name + "]" + "(" + field.TypeName + ")");
+                    }
+                    else
+                    {
+                        messageNode.Nodes.Add(field.Name + "(" + field.TypeName + ")");
+                    }
+                }
+                else // Handle primitive field types
+                {
+                    // Display repeated primitive fields with square brackets
+                    if (field.label == FieldDescriptorProto.Label.LabelRepeated)
+                    {
+                        messageNode.Nodes.Add("[" + field.Name + "]" + "(" + field.type.ToString() + ")");
+                    }
+                    else
+                    {
+                        messageNode.Nodes.Add(field.Name + "(" + field.type.ToString() + ")");
+                    }
+                }
+            }
+        }
+
+        // Iterate through each enum type in the file
+        foreach (var enumType in file.EnumTypes)
+        {
+            // Add a node for the enum type
+            TreeNode enumNode = currentTreeView.TopNode.Nodes.Add(enumType.Name + " (enum)");
+
+            // Add each enum value as a child node
+            foreach (var label in enumType.Values)
+            {
+                enumNode.Nodes.Add(label.Name);
+            }
+
+            // Tag the enum node with its descriptor
+            enumNode.Tag = enumType;
+        }
+    }
+
+    // Set the text of the UI field to the loaded file name
+    idlFile.Text = dlgOpenImport.FileName;
+}
