@@ -1,0 +1,139 @@
+
+/* Converts flatbuffer reflection schema into protobuf descriptor data containing:
+vectors of structs representing enums, messages, fields. 
+
+fb reflection enums -> pb EnumDescriptorProto structs 
+fb reflection tables -> pb DescriptorProto structs aka messages 
+fb reflection field -> pb FieldDescriptorProto structs
+fb reflection vectors -> pb repeated fields
+fb BaseType -> pb FieldDescriptorProto::Type*/ 
+
+#include <vector>              
+#include <unordered_map>       
+#include <string>              
+#include <google/protobuf/descriptor.pb.h>  // Protobuf descriptor structs (FileDescriptorProto, etc.)
+#include "reflection_generated.h"           // FlatBuffers reflection schema definitions
+
+class FlatBuffersToProtobuf {
+private:
+    const reflection::SchemaT* schema_;  
+    
+    // Static lookup table mapping FlatBuffers primitive types to protobuf field types
+    static const std::unordered_map<reflection::BaseType, google::protobuf::FieldDescriptorProto::Type> base_type_to_proto_;
+    //C++ requires static member definitions to be outside the class so this is just the declaration
+
+public:
+    // Constructor takes a FlatBuffers reflection schema pointer
+    explicit FlatBuffersToProtobuf(const reflection::SchemaT* schema) : schema_(schema) {}
+
+    // Main conversion method - transforms FlatBuffers schema into protobuf FileDescriptorProto
+    google::protobuf::FileDescriptorProto Convert() {
+        std::string file_name = schema_->file_name;
+        std::string base_name = file_name.substr(0, file_name.find_last_of('.'));
+
+        google::protobuf::FileDescriptorProto file_desc;  // Create top-level protobuf file descriptor
+        file_desc.set_name(base_name + ".proto");     
+        file_desc.set_syntax("proto3");                   // Use proto3 syntax (modern protobuf)
+        
+        // fb enums to protobuf enum descriptors
+        ConvertEnums(file_desc);
+        
+        // fb tables to protobuf message descriptors
+        ConvertMessages(file_desc);
+        
+        return file_desc;  // Return the pb schema
+    }
+
+private:
+    
+    void ConvertEnums(google::protobuf::FileDescriptorProto& file_desc) {
+        for (const auto& enum_def : schema_->enums) {      // Iterate through each enum in the fb
+            auto* enum_desc = file_desc.add_enum_type();   // Add new enum descriptor to pb 
+            enum_desc->set_name(enum_def->name);           // Set the enum name
+            
+            for (const auto& enum_val : enum_def->values) { // Iterate through each enum value in fb
+                auto* value_desc = enum_desc->add_value();   // Add new enum value descriptor to pb
+                value_desc->set_name(enum_val->name);        // Set the enum value name
+                value_desc->set_number(enum_val->value);     // Set the enum value number
+            }
+        }
+    }
+    
+
+    void ConvertMessages(google::protobuf::FileDescriptorProto& file_desc) {
+        for (const auto& obj : schema_->objects) {         // Iterate through each object/table in schema
+            if (obj->is_struct) continue;                  // Skip structs, only process tables
+            
+            auto* msg_desc = file_desc.add_message_type(); // Add new message descriptor to file
+            msg_desc->set_name(obj->name);                 // Set the message name
+            
+            int field_num = 1;                             // Initialize field numbering starting from 1 so sequantial
+            for (const auto& field : obj->fields) {        // Iterate through each field in the table
+                auto* field_desc = msg_desc->add_field();   // Add new field descriptor to message
+                field_desc->set_name(field->name);          // Set the field name
+                field_desc->set_number(field_num++);        // Set field number and increment
+                
+                if (IsVector(field->type.get())) {          // Check if field is a vector/array
+                    // Set as repeated field for arrays
+                    field_desc->set_label(google::protobuf::FieldDescriptorProto::LABEL_REPEATED);
+                    SetFieldType(field_desc, GetVectorElementType(field->type.get())); // Set element type
+                } else {
+                    // Set as optional field for single values
+                    field_desc->set_label(google::protobuf::FieldDescriptorProto::LABEL_OPTIONAL);
+                    SetFieldType(field_desc, field->type.get()); // Set field type directly
+                }
+            }
+        }
+    }
+    
+    // Helper method to check if a FlatBuffers type represents a vector/array
+    bool IsVector(const reflection::TypeT* type) const {
+        return type->base_type == reflection::BaseType_Vector; // Return true if base type is Vector
+    }
+    
+    // Sets the appropriate protobuf type and type_name for a field descriptor
+    void SetFieldType(google::protobuf::FieldDescriptorProto* field_desc, const reflection::TypeT* type) {
+        if (type->base_type == reflection::BaseType_Obj) {     // If field references another object/message
+            field_desc->set_type_name(schema_->objects[type->index]->name); // Set message type name
+            field_desc->set_type(google::protobuf::FieldDescriptorProto::TYPE_MESSAGE); // Mark as message type
+        } else if (type->base_type == reflection::BaseType_String) { // If field is a string
+            field_desc->set_type(google::protobuf::FieldDescriptorProto::TYPE_STRING); // Set string type
+        } else if (type->base_type == reflection::BaseType_Enum) { // If field is an enum
+            field_desc->set_type_name(schema_->enums[type->index]->name); // Set enum type name
+            field_desc->set_type(google::protobuf::FieldDescriptorProto::TYPE_ENUM); // Mark as enum type
+        } else {
+            // For primitive types, look up the corresponding protobuf type
+            auto it = base_type_to_proto_.find(type->base_type);
+            if (it != base_type_to_proto_.end()) {             // If mapping found
+                field_desc->set_type(it->second);              // Set the mapped protobuf type
+            }
+        }
+    }
+    
+    // Helper method to extract the element type from a FlatBuffers vector type
+    const reflection::TypeT* GetVectorElementType(const reflection::TypeT* type) const {
+        // For vectors, we need to create a TypeT representing the element type
+        // This constructs a temporary TypeT based on the vector's element type and index
+        static reflection::TypeT element_type;     // Static to avoid repeated allocation
+        element_type.base_type = type->element;    // Set base type to the vector's element type
+        element_type.index = type->index;          // Copy the type index for object/enum references
+        return &element_type;                      // Return pointer to the constructed element type
+    }
+};
+
+// Static member definition - maps FlatBuffers primitive types to protobuf field types
+const std::unordered_map<reflection::BaseType, google::protobuf::FieldDescriptorProto::Type> 
+FlatBuffersToProtobuf::base_type_to_proto_ = {
+    {reflection::BaseType_Bool, google::protobuf::FieldDescriptorProto::TYPE_BOOL},     
+    {reflection::BaseType_Byte, google::protobuf::FieldDescriptorProto::TYPE_INT32},    
+    {reflection::BaseType_UByte, google::protobuf::FieldDescriptorProto::TYPE_UINT32},   
+    {reflection::BaseType_Short, google::protobuf::FieldDescriptorProto::TYPE_INT32},  
+    {reflection::BaseType_UShort, google::protobuf::FieldDescriptorProto::TYPE_UINT32}, 
+    {reflection::BaseType_Int, google::protobuf::FieldDescriptorProto::TYPE_INT32},      
+    {reflection::BaseType_UInt, google::protobuf::FieldDescriptorProto::TYPE_UINT32},   
+    {reflection::BaseType_Long, google::protobuf::FieldDescriptorProto::TYPE_INT64},     
+    {reflection::BaseType_ULong, google::protobuf::FieldDescriptorProto::TYPE_UINT64},   
+    {reflection::BaseType_Float, google::protobuf::FieldDescriptorProto::TYPE_FLOAT},    
+    {reflection::BaseType_Double, google::protobuf::FieldDescriptorProto::TYPE_DOUBLE}  
+};
+
