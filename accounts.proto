@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package accounts;
+
+enum OrderSide {
+    BUY = 0;
+    SELL = 1;
+}
+
+enum OrderType {
+    MARKET = 0;
+    LIMIT = 1;
+    STOP = 2;
+}
+
+message Order {
+    int32 id = 1;
+    string symbol = 2;
+    OrderSide side = 3;
+    OrderType type = 4;
+    double price = 5;
+    double volume = 6;
+}
+
+message Balance {
+    string currency = 1;
+    double amount = 2;
+}
+
+message Account {
+    int32 id = 1;
+    string name = 2;
+    Balance wallet = 3;
+    repeated Order orders = 4;
+}
