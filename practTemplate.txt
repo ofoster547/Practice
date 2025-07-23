@@ -1,0 +1,614 @@
+<#@ template language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+
+<#
+//Where is m_Name coming from???
+string upperName =  m_Name;
+#>
+
+#ifndef <#=upperName#>_GENERATED_PBTOFB_H_
+#define <#=upperName#>_GENERATED_PBTOFB_H_
+
+#include "<#=upperName#>_reader.h"
+#include "<#=upperName#>_builder.h"
+//Don't know if needed
+#include "FACE/DM/<#=upperName#>/tss_types.h"
+
+<#
+foreach (var ns in referencedNamespaces)
+{
+#>
+//If multiple import files?
+#include "../<#=ns#>/<#=ns#>_Generated_PBtoFB.h"
+<#
+}
+#>  
+
+//Leaving out for now
+namespace FACE {
+namespace DM {
+
+<#
+IEnumerable<reflection.ObjectT> objects = m_Schema.Objects;
+IEnumerable<reflection.EnumT> enums = m_Schema.Enums;
+//Where is m_ObjectsByDependency coming from???
+foreach (var od in m_ObjectsByDependency)
+{
+	reflection.ObjectT o = od.Value;//get the table
+	if (!o.Name.Contains("ALLTYPEDEFS")) //skip internal/metadata
+	{
+	// Split the namespace from the name
+	char[] separators = new char[] { '.'};
+	// For "accounts.Order":
+	string[] names = o.Name.Split(separators, StringSplitOptions.RemoveEmptyEntries); //split by .
+	string compositePrefix = "";
+	//string[] serviceNames = names[1].Split(new char[] { '_'}, StringSplitOptions.RemoveEmptyEntries);
+	// Order, Balance, Account
+	string TableName = names[1];
+
+	
+	//table Account (view) 
+	IEnumerable<reflection.KeyValueT> attributes = o.Attributes;
+	foreach (var a in attributes)
+    {
+		if (a.Key == "composite_view")
+		{
+			compositePrefix = "m_";
+		}
+		if (a.Key == "sub_template")
+		{
+		   TableName = "T_" + a.Value + "::" + names[1].Substring(a.Value.Length + 1); //+1 to skip underscore
+		}
+	}
+	// Detect whether we are serializing a fixed array, because the function signatures are different
+	bool isArrayStruct = false;
+	int arrayCount = 0;
+	bool isSequenceStruct = false;
+	reflection.BaseType arrayType = reflection.BaseType.None;
+	if (o.Fields.Count() == 1)
+	{
+	    foreach (var f in o.Fields)
+		{
+			if (f.Type.BaseType == reflection.BaseType.Array) //If array
+			{
+				isArrayStruct = true;
+				arrayCount = f.Type.FixedLength; //size of fixed array - coordinates: [float:3];  would be 3
+				arrayType = f.Type.Element; //Element = BaseType.Float
+			}
+			else if (f.Name == "sequenceBytes") //raw binary data needing custom handling
+			{
+			   isSequenceStruct = true;
+			}
+		}
+	}
+#> 
+namespace <#=names[0]#> {
+<#
+	if (compositePrefix == "m_") //Table has attribute "composite_view", Combines data from multiple tables
+	{
+#>
+class <#=names[1]#>FACESerializer //What's FACESerializer
+{
+public:
+<#
+	}
+	if (isArrayStruct) //so PB side doesn't change if ArrayStruct?
+	{
+#> 
+inline static void Create<#=names[1]#>FromPB(<#=names[0]#>_<#=names[1]#>_t* ref, const <#=names[0]#>::<#=TableName#>& _o)
+{
+
+<#
+	}
+	else
+	{
+#>
+inline static void Create<#=names[1]#>FromPB(flatcc_builder_t* _fbb, const <#=names[0]#>::<#=TableName#>& _o)
+{
+
+<#
+}
+	IEnumerable<reflection.FieldT> fields3 = o.Fields;//Grab all fields
+	foreach (var f in fields3)
+    {
+	reflection.BaseType actualType = f.Type.BaseType; //int, string, array, table reference etc
+        int index = f.Type.Index; //primitive -1 or complex type index in schema 
+	if (f.Type.BaseType == reflection.BaseType.Array) //if array, how should I handle fixed length array??
+        /*protobuf does not have such a concept in the protocol, nor in the .proto schema language. In strings and blobs, the data is always technically variable length using a length 	prefix (which itself uses varint encoding, so even the length is variable length).Of course, if you only ever store data of a particular length, then it will line up. Note also 	that since strings in protobuf are unicode using UTF-8 encoding, the length of the encoded data is not as simple as the number of characters (unless you are using only ASCII 	characters).*/
+	{
+#>
+
+ //memcpy(ref->arrayBytes, _o, <#=f.Type.FixedLength.ToString()#>);
+ //How to handle??
+
+<#
+		}
+		else if (f.Name == "sequenceBytes")
+		{
+#>
+	if (_o.<#=names[1]#>_size() > 0)
+	{
+	     <#=names[0]#>_<#=names[1]#>_sequenceBytes_create_pe(_fbb, _o.sequenceBytes().data(), _o.sequenceBytes().size()); //SequenceBytes needs special attention
+	}
+
+<#  
+		}
+		else if (f.Type.BaseType == reflection.BaseType.Vector)
+        {
+			actualType = f.Type.Element; //get vector type
+			
+			if (actualType == reflection.BaseType.Obj) //if it's a vector of objects
+			{
+				//wallet : Balance;  
+				string[] fieldType = objects.ElementAt(f.Type.Index).Name.Split(separators, StringSplitOptions.RemoveEmptyEntries); 
+				//accounts, balance
+				bool arraySequence = false;
+				IEnumerable<reflection.KeyValueT> fieldAttributes = f.Attributes;
+	            foreach (var fa in fieldAttributes)
+				{
+					if (fa.Key == "fixed_array_sequence")
+					{
+						arraySequence = true;
+						break;
+					}
+				}
+				if (!arraySequence)
+				{
+#>
+	if (_o.<#=compositePrefix+f.Name#>_size()>0)
+	{
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_start(_fbb);
+
+		for (int i = 0; i < _o.<#=compositePrefix+f.Name#>_size(); ++i)
+		{
+
+			<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_push_start(_fbb);
+			<#=fieldType[0]#>::Create<#=fieldType[1]#>FromPB(_fbb, _o.<#=compositePrefix+f.Name#>(i)); 
+			<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_push_end(_fbb);
+		}
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_end(_fbb);
+	}
+
+<#
+	            }
+		    else
+		   {
+#>
+	if (_o.<#=f.Name#>_size()>0)
+	{
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_start(_fbb);
+
+		for (int i = 0; i < _o.<#=f.Name#>_size(); ++i)
+		{
+			<#=fieldType[0]#>_<#=fieldType[1]#>_t* ref = <#=names[0]#>_<#=names[1]#>_<#=f.Name#>_extend(_fbb, 1);
+			<#=fieldType[0]#>::Create<#=fieldType[1]#>FromPB(ref, _o.<#=f.Name#>()); //was [0] ASK
+		
+		}
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_end(_fbb);
+	}
+<#
+			}
+		    }
+		    else if (actualType == reflection.BaseType.String)
+		    {
+#>
+
+	if (_o.<#=f.Name#>_size() > 0)
+	{
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_start(_fbb);
+
+		for (int i = 0; i < _o.<#=f.Name#>_size(); ++i)
+		{
+			if (!_o.<#=f.Name#>(i).empty())
+			{
+				<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_push_create_str(_fbb, _o.<#=f.Name#>(i).data());
+			}
+			else
+			{
+				<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_push_create_str(_fbb, "");
+			}
+		}
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_end(_fbb);
+	}
+
+
+<#
+			}
+			else if (f.Type.Index > -1)//primitive
+			{
+#>
+
+	if (_o.<#=f.Name#>_size() > 0)
+	{
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_start(_fbb);
+
+		for (int i = 0; i < _o.<#=f.Name#>_size(); ++i)
+		{
+			<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_push_create(_fbb, _o.<#=f.Name#>(i));
+		}
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_end(_fbb);
+	}
+
+<#
+			}
+			else
+			{
+#>
+
+
+	if (_o.<#=f.Name#>_size() >0)
+	{
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_start(_fbb);
+
+		for (int i = 0; i < _o.<#=f.Name#>_size(); ++i)
+		{
+			<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_push_create(_fbb, _o.<#=f.Name#>(i));
+		}
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_end(_fbb);
+	}
+
+<#
+			}
+		}  // Vector or structure
+		else if (actualType == reflection.BaseType.Obj)
+		{
+			string[] fieldType = objects.ElementAt(f.Type.Index).Name.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+			if (objects.ElementAt(f.Type.Index).IsStruct)
+			{
+#>
+	{
+		<#=fieldType[0]#>_<#=fieldType[1]#>_t* ref = <#=names[0]#>_<#=names[1]#>_<#=f.Name#>_start(_fbb);
+		<#=fieldType[0]#>::Create<#=fieldType[1]#>FromPB(ref, _o.<#=f.Name#>());
+		<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_end(_fbb);
+	}
+<#
+			}
+			else
+			{
+#>
+
+
+	<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_start(_fbb);
+	<#=fieldType[0]#>::Create<#=fieldType[1]#>FromFACE(_fbb, _o.<#=f.Name#>());
+	<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_end(_fbb);
+
+<#
+			}
+		} 
+		else if (actualType == reflection.BaseType.String)
+		{
+#>
+
+//if (_o.<#=f.Name#>.buffer()) <#=names[0]#>_<#=names[1]#>_<#=f.Name#>_create_str(_fbb, _o.<#=f.Name#>.buffer());
+
+if(!_o.<#=f.Name#>.empty()){
+	auto <#=f.Name#>_ref = flatbuffers_string_create_str(_fbb, _o.<#=f.Name#>().c_str());
+	<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_add(_fbb, <#=f.Name#>_ref);
+	}
+<#
+		} 
+		else if (f.Type.Index > -1)
+		{
+#>
+
+<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_add(_fbb, _o.<#=f.Name#>());
+<#
+		} 
+		else 
+		{
+#>
+<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_add(_fbb, _o.<#=f.Name#>());
+
+
+<#
+		}         
+	} 
+#>
+
+} 
+
+<#
+
+
+	if (isArrayStruct)
+	{
+#>
+inline static void CreatePBFrom<#=names[1]#>(const  <#=names[0]#>_<#=names[1]#>_struct_t root, <#=ConvertScalarToType(arrayType)#> (&o_)[<#=arrayCount.ToString()#>]) //?????
+{
+
+<#
+        }
+	else
+	{
+#>
+
+inline static void CreatePBFrom<#=names[1]#>(const <#=names[0]#>_<#=names[1]#>_table_t root, <#=names[0]#>::<#=FACEName#>& o_)
+{
+
+<#
+	}
+#>
+
+<#
+	if (compositePrefix == "m_")
+	{
+#>
+
+    o_.Clear();
+
+<#
+	}
+#> 
+
+<#
+	IEnumerable<reflection.FieldT> fields4 = o.Fields;
+	foreach (var f in fields4)
+    {
+	 reflection.BaseType actualType = f.Type.BaseType;
+        int index = f.Type.Index;
+		string[] fieldType = new string[2];
+
+		fieldType[0] = "unset";
+		fieldType[1] = "unset";
+		
+		
+		 if (f.Type.BaseType == reflection.BaseType.Array)
+		 {
+#>
+
+  
+    // memcpy(o_, root->arrayBytes, <#=f.Type.FixedLength.ToString()#>);
+    for (int i = 0; i < <#=f.Type.FixedLength.ToString()#>; ++i) {
+        o_.add_<#=f.Name#>(root->arrayBytes[i]);
+    }
+
+<#
+		 }
+		 else if (f.Name == "sequenceBytes")
+		{
+#>
+
+
+	 
+	if (<#=names[0]#>_<#=names[1]#>_sequenceBytes_is_present(root))
+	{
+	     o_.set_sequenceBytes(<#=names[0]#>_<#=names[1]#>_sequenceBytes(root));
+
+	}
+	else
+	{
+	     o_.clear_sequenceBytes(); 
+	}
+	
+
+<#  
+		}
+		else if (f.Type.BaseType == reflection.BaseType.Vector)
+        	{
+			actualType = f.Type.Element;
+			string vectorName = "unset_";
+			bool fixed_array_sequence = false;
+		
+			// Get the string name of the vector
+			if (actualType == reflection.BaseType.Obj)
+		    {
+				fieldType = objects.ElementAt(f.Type.Index).Name.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+				vectorName = fieldType[0] + "_" + fieldType[1];
+				IEnumerable<reflection.KeyValueT> fieldAttributes = f.Attributes;
+				foreach (var fa in fieldAttributes)
+				{
+					if (fa.Key == "fixed_array_sequence")
+					{
+						fixed_array_sequence = true;
+						break;
+					}
+				}
+			}
+			else if (actualType == reflection.BaseType.String)
+		    {
+			  vectorName = "flatbuffers_string";
+			}
+			else if (f.Type.Index > -1)
+			{
+				fieldType = enums.ElementAt(f.Type.Index).Name.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+				vectorName  = fieldType[0] + "_" + fieldType[1];
+			}
+			else
+			{
+			    vectorName = "flatbuffers_" + __scalarTypesToFB[actualType];
+				
+			}
+#>
+
+	if (<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_is_present(root))
+	{
+
+	    <#=vectorName#>_vec_t _<#=f.Name#> = <#=names[0]#>_<#=names[1]#>_<#=f.Name#>_get(root);
+	    int len = <#=vectorName#>_vec_len(_<#=f.Name#>);
+
+<#
+			if (fixed_array_sequence)
+			{
+#>
+    	// Clear existing and reserve space for fixed array
+    	o_.clear_<#=f.Name#>();
+    	o_.mutable_<#=f.Name#>()->Reserve(len);
+
+<#
+	}
+	else
+	{
+#>
+	  // Clear existing for dynamic vector
+          o_.clear_<#=f.Name#>();
+
+<#
+			}
+#>
+
+		for (int i = 0; i < len; ++i)
+		{
+
+<#
+		
+			if (actualType == reflection.BaseType.Obj)
+			{
+				if (fixed_array_sequence)
+				{
+#>
+    		const <#=fieldType[0]#>_<#=fieldType[1]#>_table_t fb_<#=f.Name.ToLower()#> = <#=fieldType[0]#>_<#=fieldType[1]#>_vec_at(_<#=f.Name#>, i);
+    		<#=fieldType[0]#>::<#=fieldType[1]#>* proto_<#=f.Name.ToLower()#> = o_.add_<#=f.Name#>();
+    		CreatePBFrom<#=fieldType[1]#>(fb_<#=f.Name.ToLower()#>, *proto_<#=f.Name.ToLower()#>);
+
+<#
+
+				}
+				else
+				{
+#>
+
+    		const <#=fieldType[0]#>_<#=fieldType[1]#>_table_t fb_<#=f.Name.ToLower()#> = <#=fieldType[0]#>_<#=fieldType[1]#>_vec_at(_<#=f.Name#>, i);
+    		<#=fieldType[0]#>::<#=fieldType[1]#>* proto_<#=f.Name.ToLower()#> = o_.add_<#=f.Name#>();
+    		CreatePBFrom<#=fieldType[1]#>(fb_<#=f.Name.ToLower()#>, *proto_<#=f.Name.ToLower()#>);
+
+<#
+				}
+			}	
+			else if (actualType == reflection.BaseType.String)
+			{
+#>
+
+		// Get string from vector at index i
+		flatbuffers_string_t s = flatbuffers_string_vec_at(_<#=f.Name#>, i);
+                if (s != NULL) {
+				o_.add_<#=f.Name#>(std::string(s));
+     		}
+			
+<#
+			}
+			else if (f.Type.Index > -1)
+			{
+#>
+		o_.<#=f.Name#>(i) = (<#=fieldType[0]#>::<#=fieldType[1]#>::Value)<#=fieldType[0]#>_<#=fieldType[1]#>_vec_at(_<#=f.Name#>, i);
+
+<#
+			}
+			else
+			{
+#>
+
+		o_.<#=f.Name#>(i) = <#=vectorName#>_vec_at(_<#=f.Name#>, i);
+<#
+			}
+#>
+		}
+
+<#
+            if (compositePrefix == "m_")
+	        {
+#>
+
+		o_.m_Discriminator = <#=fieldType[0]#>::<#=names[1]#>::CASES_<#=f.Name.ToUpper()#>; //CASES???
+
+<#
+			}
+#>
+
+	}
+	else
+	{
+	     o_.clear_<#=compositePrefix+f.Name#>(); 
+	}
+
+<#
+        	}
+		else
+		{
+
+			if (actualType == reflection.BaseType.Obj)
+			{
+				fieldType = objects.ElementAt(f.Type.Index).Name.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+#>
+
+
+
+    <#=fieldType[0]#>::CreatePBFrom<#=fieldType[1]#>(<#=names[0]#>_<#=names[1]#>_<#=f.Name#>(root), o_.<#=f.Name#>());
+
+<#
+			}
+			else if (actualType == reflection.BaseType.String)
+			{
+#>
+
+  	//slen = <#=names[0]#>_<#=names[1]#>_<#=f.Name#>_is_present(root) ? (FACE::UnsignedLong)strlen(<#=names[0]#>_<#=names[1]#>_<#=f.Name#>(root)) + 1 : 0;
+	//o_.<#=f.Name#>.resize(slen);
+	if (<#=names[0]#>_<#=names[1]#>_<#=f.Name#>_is_present(root))
+	{
+		o_.set_<#=f.Name#>(<#=names[0]#>_<#=names[1]#>_<#=f.Name#>(root));
+	}
+	else
+	{
+	o_.clear_<#=f.Name#>();
+	}
+<#
+			}
+			else if (f.Type.Index > -1)
+			{
+				fieldType = enums.ElementAt(f.Type.Index).Name.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+		  
+#>
+	o_.<#=f.Name#>() = (<#=fieldType[0]#>::<#=fieldType[1]#>::Value)<#=names[0]#>_<#=names[1]#>_<#=f.Name#>(root);
+
+<#
+			}
+
+			else
+			{
+#>
+
+	o_.<#=f.Name#>() = <#=names[0]#>_<#=names[1]#>_<#=f.Name#>(root);
+
+<#
+			}
+		}
+	}
+#>
+
+<#
+	if (compositePrefix == "m_")
+	{
+#>
+
+
+}
+
+<#
+	}
+#>
+
+};
+
+} // namespace <#=names[0]#>
+<#
+}
+}
+#>
+
+} // namespace DM
+} // namespace FACE
+
+#endif  //FLATBUFFERS_GENERATED_<#=upperName#>_PBTOFB_H_
+
+
+
+
+
+
+
+
+
+
+
